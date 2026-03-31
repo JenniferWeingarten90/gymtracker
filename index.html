@@ -1004,7 +1004,7 @@ async function importBundled() {
   try {
     const resp = await fetch('training_data.json');
     const records = await resp.json();
-    const count = await importRecords(records);
+    const count = await importJSONSmart(records);
     alert('Successfully imported ' + count + ' exercises!');
     renderHistory();
   } catch(e) { alert('Import failed: ' + e.message); }
@@ -1018,8 +1018,8 @@ function handleFileImport(e) {
   reader.onload = async () => {
     let count = 0;
     if (file.name.endsWith('.json')) {
-      const records = JSON.parse(reader.result);
-      count = await importRecords(records);
+      const parsed = JSON.parse(reader.result);
+      count = await importJSONSmart(parsed);
     } else {
       count = await importCSVData(reader.result);
     }
@@ -1030,7 +1030,32 @@ function handleFileImport(e) {
   e.target.value = '';
 }
 
-async function importRecords(records) {
+async function importJSONSmart(parsed) {
+  // Detect format: exported (nested sessions) vs flat records
+  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].exercises) {
+    // Nested session format (from our export)
+    return await importNestedSessions(parsed);
+  } else {
+    // Flat record format (from Excel import)
+    return await importFlatRecords(parsed);
+  }
+}
+
+async function importNestedSessions(sessions) {
+  let total = 0;
+  for (const s of sessions) {
+    const session = { id: genId(), date: s.date, exercises: [] };
+    s.exercises.forEach(ex => {
+      const reps = Array.isArray(ex.reps) ? ex.reps : String(ex.reps).split(/[xX\-]/).map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+      session.exercises.push({ name: ex.name, weight: ex.weight, reps, comment: ex.comment || '' });
+      total++;
+    });
+    await saveSession(session);
+  }
+  return total;
+}
+
+async function importFlatRecords(records) {
   const byDate = {};
   records.forEach(r => {
     if (!byDate[r.date]) byDate[r.date] = [];

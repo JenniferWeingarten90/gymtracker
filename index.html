@@ -129,23 +129,6 @@ textarea { resize:vertical; min-height:40px; }
 }
 .filter-panel { margin-bottom:12px; }
 .filter-panel.hidden { display:none; }
-/* Timer */
-.timer-overlay {
-  position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5);
-  display:flex; align-items:center; justify-content:center; z-index:200;
-}
-.timer-overlay.hidden { display:none; }
-.timer-box {
-  background:#fff; border-radius:var(--radius); padding:30px; text-align:center;
-  width:300px; max-width:90%;
-}
-.timer-circle {
-  width:140px; height:140px; border-radius:50%; margin:20px auto;
-  display:flex; align-items:center; justify-content:center;
-  font-size:36px; font-weight:700; font-variant-numeric:tabular-nums;
-  border:6px solid var(--surface); position:relative;
-}
-.timer-circle canvas { position:absolute; top:-6px; left:-6px; }
 /* Segmented control */
 .segmented {
   display:flex; background:var(--surface); border-radius:var(--radius-sm);
@@ -260,7 +243,12 @@ textarea { resize:vertical; min-height:40px; }
     </div>
     <input type="file" id="file-import" accept=".json,.csv" style="display:none" onchange="handleFileImport(event)">
   </div>
-  <div id="history-content"></div>
+  <div class="search-bar">
+    <input type="text" id="history-search-input" placeholder="Search exercises..." oninput="onHistorySearch(this.value)">
+    <button class="filter-toggle" id="history-filter-btn" onclick="historyShowFilter=!historyShowFilter;renderHistory()">🔽</button>
+  </div>
+  <div id="history-filter-panel" class="filter-panel hidden"></div>
+  <div id="history-results"></div>
 </div>
 
 <!-- TAB BAR -->
@@ -279,26 +267,6 @@ textarea { resize:vertical; min-height:40px; }
   </button>
 </nav>
 
-<!-- TIMER OVERLAY -->
-<div id="timer-overlay" class="timer-overlay hidden">
-  <div class="timer-box">
-    <div style="font-weight:700;font-size:18px;margin-bottom:4px;">Rest Timer</div>
-    <div class="timer-circle">
-      <canvas id="timer-canvas" width="152" height="152"></canvas>
-      <span id="timer-display">1:30</span>
-    </div>
-    <div class="chip-row" style="justify-content:center;margin-bottom:16px;">
-      <button class="chip active" onclick="setTimerDuration(60,this)">60s</button>
-      <button class="chip" onclick="setTimerDuration(90,this)">90s</button>
-      <button class="chip" onclick="setTimerDuration(120,this)">120s</button>
-      <button class="chip" onclick="setTimerDuration(180,this)">180s</button>
-    </div>
-    <div class="row" style="justify-content:center;gap:12px;">
-      <button id="timer-start-btn" class="btn btn-primary btn-small" onclick="toggleTimer()">Start</button>
-      <button class="btn btn-secondary btn-small" onclick="closeTimer()">Skip</button>
-    </div>
-  </div>
-</div>
 
 <!-- EDIT MODAL -->
 <div id="edit-modal" class="modal-overlay hidden">
@@ -410,9 +378,9 @@ function renderLog() {
       <div style="text-align:center;padding:40px 0;">
         <div style="font-size:48px;margin-bottom:16px;">🏋️</div>
         <div style="font-size:22px;font-weight:700;margin-bottom:20px;">Ready to train?</div>
-        <div class="card" style="text-align:left;">
+        <div class="card" style="text-align:left;overflow:hidden;">
           <label class="label">Workout Date</label>
-          <input type="date" id="session-date" value="${today}">
+          <input type="date" id="session-date" value="${today}" style="max-width:100%;">
         </div>
         <button class="btn btn-primary mt16" onclick="startWorkout()">Start Workout</button>
       </div>`;
@@ -420,11 +388,11 @@ function renderLog() {
     let exList = '';
     let totalVol = 0;
     activeSession.exercises.forEach((ex, i) => {
-      const vol = ex.weight * ex.reps.reduce((a,b)=>a+b, 0);
+      const vol = calcVolume(ex);
       totalVol += vol;
       exList += `<div class="card" onclick="editActiveExercise(${i})" style="cursor:pointer;">
         <div class="row"><span class="ex-name">${ex.name}</span><span style="margin-left:auto;color:var(--green);">✓</span></div>
-        <div class="ex-detail">${ex.weight} × ${ex.reps.join(' / ')} = <span class="text-amber fw600">${Math.round(vol)}</span></div>
+        <div class="ex-detail">${formatExDetail(ex)} = <span class="text-amber fw600">${Math.round(vol)}</span></div>
         ${ex.comment ? '<div class="ex-comment">'+esc(ex.comment)+'</div>' : ''}
       </div>`;
     });
@@ -477,30 +445,26 @@ async function showAddExercise() {
     </div>
     <div id="ae-prev" class="mt12"></div>
     <div id="ae-insight" class="mt8"></div>
-    <label class="label mt12">Weight</label>
-    <input type="number" id="ae-weight" placeholder="0" step="0.1" inputmode="decimal">
     <label class="label mt12">Sets</label>
     <div class="row">
       <button class="set-btn" onclick="changeAeSets(-1)">−</button>
       <span id="ae-set-count" class="set-reps">3</span>
       <button class="set-btn" onclick="changeAeSets(1)">+</button>
     </div>
-    <label class="label mt12">Reps</label>
+    <label class="label mt12">Weight &amp; Reps per Set</label>
     <div id="ae-sets"></div>
     <div id="ae-volume" class="mt12"></div>
     <label class="label mt12">Comment (optional)</label>
     <input type="text" id="ae-comment" placeholder="Any notes...">
-    <button class="btn btn-secondary mt12" onclick="openTimer()">⏱ Rest Timer</button>
     <button id="ae-save" class="btn btn-primary mt12" onclick="saveNewExercise()">Save Exercise</button>
   `;
 
   window._aeNames = names;
   window._aeSets = 3;
   window._aeReps = [6,6,6];
+  window._aeWeights = [0,0,0];
   renderAeSets();
   updateAeVolume();
-
-  document.getElementById('ae-weight').addEventListener('input', updateAeVolume);
 }
 
 async function filterExSuggestions() {
@@ -530,8 +494,7 @@ async function selectExName(name) {
   if (prev.length) {
     prevDiv.innerHTML = '<div class="card"><div class="label">Previous Sessions</div>' +
       prev.map(e => {
-        const vol = e.weight * e.reps.reduce((a,b)=>a+b,0);
-        return `<div class="prev-entry"><span class="prev-date">${formatDateShort(e.sessionDate)}</span> ${e.weight} × ${e.reps.join('/')} = <span class="prev-vol">${Math.round(vol)}</span>${e.comment?'<br><i>'+esc(e.comment)+'</i>':''}</div>`;
+        return `<div class="prev-entry"><span class="prev-date">${formatDateShort(e.sessionDate)}</span><br><span style="color:var(--text);font-weight:600;">${formatExDetail(e)}</span>${e.comment?'<br><i>'+esc(e.comment)+'</i>':''}</div>`;
       }).join('') + '</div>';
   } else { prevDiv.innerHTML = ''; }
 
@@ -544,9 +507,12 @@ async function selectExName(name) {
 
   // Prefill weight and reps from latest
   if (entries.length) {
-    document.getElementById('ae-weight').value = entries[0].weight;
+    const prevWeights = getExWeights(entries[0]);
     window._aeSets = entries[0].reps.length;
     window._aeReps = [...entries[0].reps];
+    window._aeWeights = [...prevWeights];
+    // Pad weights if needed
+    while (window._aeWeights.length < window._aeSets) window._aeWeights.push(window._aeWeights[window._aeWeights.length-1]||0);
     document.getElementById('ae-set-count').textContent = window._aeSets;
     renderAeSets();
     updateAeVolume();
@@ -557,6 +523,8 @@ function changeAeSets(delta) {
   window._aeSets = Math.max(1, Math.min(20, window._aeSets + delta));
   while (window._aeReps.length < window._aeSets) window._aeReps.push(window._aeReps[window._aeReps.length-1]||6);
   while (window._aeReps.length > window._aeSets) window._aeReps.pop();
+  while (window._aeWeights.length < window._aeSets) window._aeWeights.push(window._aeWeights[window._aeWeights.length-1]||0);
+  while (window._aeWeights.length > window._aeSets) window._aeWeights.pop();
   document.getElementById('ae-set-count').textContent = window._aeSets;
   renderAeSets();
   updateAeVolume();
@@ -565,14 +533,21 @@ function changeAeSets(delta) {
 function renderAeSets() {
   const div = document.getElementById('ae-sets');
   div.innerHTML = window._aeReps.map((r,i) => `
-    <div class="set-row">
+    <div class="set-row" style="flex-wrap:wrap;">
       <span class="set-label">Set ${i+1}</span>
+      <input type="number" id="weight-${i}" value="${window._aeWeights[i]||0}" step="0.1" inputmode="decimal" style="width:70px;padding:8px;font-size:15px;text-align:center;" onchange="changeWeight(${i},this.value)" onfocus="this.select()">
+      <span class="text-sm text-secondary">×</span>
       <button class="set-btn" onclick="changeRep(${i},-1)">−</button>
       <span class="set-reps" id="rep-${i}">${r}</span>
       <button class="set-btn" onclick="changeRep(${i},1)">+</button>
       <span class="text-sm text-secondary">reps</span>
     </div>
   `).join('');
+}
+
+function changeWeight(i, val) {
+  window._aeWeights[i] = parseFloat(val) || 0;
+  updateAeVolume();
 }
 
 function changeRep(i, delta) {
@@ -582,9 +557,7 @@ function changeRep(i, delta) {
 }
 
 function updateAeVolume() {
-  const w = parseFloat(document.getElementById('ae-weight')?.value) || 0;
-  const total = window._aeReps ? window._aeReps.reduce((a,b)=>a+b,0) : 0;
-  const vol = w * total;
+  const vol = window._aeReps ? window._aeReps.reduce((sum, r, i) => sum + r * (window._aeWeights[i] || 0), 0) : 0;
   const div = document.getElementById('ae-volume');
   if (div && vol > 0) {
     div.innerHTML = `<div class="card"><div class="row"><span class="text-sm text-secondary">Volume</span><span style="margin-left:auto;font-weight:700;color:var(--amber);">${Math.round(vol)}</span></div></div>`;
@@ -593,10 +566,10 @@ function updateAeVolume() {
 
 function saveNewExercise() {
   const name = document.getElementById('ae-name').value.trim();
-  const weight = parseFloat(document.getElementById('ae-weight').value);
   const comment = document.getElementById('ae-comment').value.trim();
-  if (!name || !weight || weight <= 0) { alert('Please enter exercise name and weight.'); return; }
-  activeSession.exercises.push({ name, weight, reps: [...window._aeReps], comment: comment||'' });
+  const hasWeight = window._aeWeights.some(w => w > 0);
+  if (!name || !hasWeight) { alert('Please enter exercise name and at least one weight.'); return; }
+  activeSession.exercises.push({ name, weights: [...window._aeWeights], reps: [...window._aeReps], comment: comment||'' });
   closeEditModal();
   renderLog();
 }
@@ -608,9 +581,7 @@ function editActiveExercise(idx) {
   const c = document.getElementById('edit-content');
   c.innerHTML = `
     <div class="label">Exercise: <strong>${esc(ex.name)}</strong></div>
-    <label class="label mt12">Weight</label>
-    <input type="number" id="eae-weight" value="${ex.weight}" step="0.1" inputmode="decimal">
-    <label class="label mt12">Reps</label>
+    <label class="label mt12">Weight &amp; Reps per Set</label>
     <div id="eae-sets"></div>
     <label class="label mt12">Comment</label>
     <input type="text" id="eae-comment" value="${esc(ex.comment||'')}">
@@ -618,20 +589,28 @@ function editActiveExercise(idx) {
     <button class="btn btn-danger mt8" onclick="deleteActiveExercise(${idx})">Delete Exercise</button>
   `;
   window._eaeReps = [...ex.reps];
+  window._eaeWeights = [...getExWeights(ex)];
+  renderEaeSets();
+}
+
+function renderEaeSets() {
   const setsDiv = document.getElementById('eae-sets');
   setsDiv.innerHTML = window._eaeReps.map((r,i) => `
     <div class="set-row">
       <span class="set-label">Set ${i+1}</span>
-      <button class="set-btn" onclick="window._eaeReps[${i}]=Math.max(1,window._eaeReps[${i}]-1);this.nextElementSibling.textContent=window._eaeReps[${i}]">−</button>
+      <input type="number" value="${window._eaeWeights[i]||0}" step="0.1" inputmode="decimal" style="width:70px;padding:8px;font-size:15px;text-align:center;" onchange="window._eaeWeights[${i}]=parseFloat(this.value)||0" onfocus="this.select()">
+      <span class="text-sm text-secondary">×</span>
+      <button class="set-btn" onclick="window._eaeReps[${i}]=Math.max(1,window._eaeReps[${i}]-1);renderEaeSets()">−</button>
       <span class="set-reps">${r}</span>
-      <button class="set-btn" onclick="window._eaeReps[${i}]++;this.previousElementSibling.textContent=window._eaeReps[${i}]">+</button>
+      <button class="set-btn" onclick="window._eaeReps[${i}]++;renderEaeSets()">+</button>
       <span class="text-sm text-secondary">reps</span>
     </div>
   `).join('');
 }
 
 function saveEditActive(idx) {
-  activeSession.exercises[idx].weight = parseFloat(document.getElementById('eae-weight').value);
+  activeSession.exercises[idx].weights = [...window._eaeWeights];
+  delete activeSession.exercises[idx].weight;
   activeSession.exercises[idx].reps = [...window._eaeReps];
   activeSession.exercises[idx].comment = document.getElementById('eae-comment').value.trim();
   closeEditModal();
@@ -653,24 +632,20 @@ let historyDateFrom = '';
 let historyDateTo = '';
 let historyShowFilter = false;
 
+function onHistorySearch(val) {
+  historySearch = val;
+  renderHistoryResults();
+}
+
 async function renderHistory() {
-  const sessions = await getAllSessions();
-  const c = document.getElementById('history-content');
+  // Update filter panel and button styling (not the search input)
+  const filterBtn = document.getElementById('history-filter-btn');
+  if (filterBtn) filterBtn.style.cssText = (historyDateFrom||historyDateTo) ? 'color:var(--amber);border-color:var(--amber);' : '';
 
-  let filtered = sessions;
-  if (historySearch) {
-    const s = historySearch.toLowerCase();
-    filtered = filtered.filter(ses => ses.exercises.some(ex => ex.name.toLowerCase().includes(s)));
-  }
-  if (historyDateFrom) filtered = filtered.filter(ses => ses.date >= historyDateFrom);
-  if (historyDateTo) filtered = filtered.filter(ses => ses.date <= historyDateTo);
-
-  let html = `
-    <div class="search-bar">
-      <input type="text" placeholder="Search exercises..." value="${esc(historySearch)}" oninput="historySearch=this.value;renderHistory()">
-      <button class="filter-toggle" onclick="historyShowFilter=!historyShowFilter;renderHistory()" style="${historyDateFrom||historyDateTo?'color:var(--amber);border-color:var(--amber);':''}">🔽</button>
-    </div>
-    <div class="filter-panel ${historyShowFilter?'':'hidden'}">
+  const filterPanel = document.getElementById('history-filter-panel');
+  if (filterPanel) {
+    filterPanel.className = 'filter-panel ' + (historyShowFilter ? '' : 'hidden');
+    filterPanel.innerHTML = `
       <div class="row mb8">
         <label class="label" style="margin:0;width:40px;">From</label>
         <input type="date" value="${historyDateFrom}" onchange="historyDateFrom=this.value">
@@ -680,26 +655,51 @@ async function renderHistory() {
         <input type="date" value="${historyDateTo}" onchange="historyDateTo=this.value">
       </div>
       <div class="row">
-        <button class="btn btn-primary btn-small" onclick="renderHistory()">Apply</button>
-        ${historyDateFrom||historyDateTo?'<button class="btn btn-danger btn-small" onclick="historyDateFrom=\'\';historyDateTo=\'\';renderHistory()">Clear</button>':''}
-      </div>
-    </div>`;
+        <button class="btn btn-primary btn-small" onclick="renderHistoryResults()">Apply</button>
+        ${historyDateFrom||historyDateTo?'<button class="btn btn-danger btn-small" onclick="historyDateFrom=\'\';historyDateTo=\'\';renderHistoryResults()">Clear</button>':''}
+      </div>`;
+  }
 
-  if (!filtered.length) {
-    html += `<div class="empty-state"><span class="empty-icon">🏋️</span><div class="empty-title">No workouts found</div>${sessions.length?'Try adjusting your search or filters.':'Start logging or import your data to see your history.'}</div>`;
+  await renderHistoryResults();
+}
+
+async function renderHistoryResults() {
+  const sessions = await getAllSessions();
+  const c = document.getElementById('history-results');
+
+  let filtered = sessions;
+  if (historyDateFrom) filtered = filtered.filter(ses => ses.date >= historyDateFrom);
+  if (historyDateTo) filtered = filtered.filter(ses => ses.date <= historyDateTo);
+
+  // Filter exercises within sessions when searching
+  const searchTerm = historySearch ? historySearch.toLowerCase() : '';
+  let displaySessions = filtered;
+  if (searchTerm) {
+    displaySessions = filtered.map(ses => {
+      const matchingExercises = ses.exercises.filter(ex => ex.name.toLowerCase().includes(searchTerm));
+      if (!matchingExercises.length) return null;
+      return { ...ses, exercises: matchingExercises };
+    }).filter(Boolean);
+  }
+
+  let html = '';
+  if (!displaySessions.length) {
+    html = `<div class="empty-state"><span class="empty-icon">🏋️</span><div class="empty-title">No workouts found</div>${sessions.length?'Try adjusting your search or filters.':'Start logging or import your data to see your history.'}</div>`;
   } else {
-    filtered.forEach(ses => {
-      const totalVol = ses.exercises.reduce((sum,ex) => sum + ex.weight * ex.reps.reduce((a,b)=>a+b,0), 0);
+    displaySessions.forEach(ses => {
+      const totalVol = ses.exercises.reduce((sum,ex) => sum + calcVolume(ex), 0);
       html += `<div class="session-header">
         <span class="session-date">${formatDate(ses.date)}</span>
         <span class="session-vol">Vol: ${Math.round(totalVol)}</span>
         <button class="del-btn" onclick="deleteSessionUI('${ses.id}')" title="Delete session">🗑</button>
       </div>`;
       ses.exercises.forEach((ex, i) => {
-        const vol = ex.weight * ex.reps.reduce((a,b)=>a+b,0);
-        html += `<div class="exercise-row" onclick="editHistoryExercise('${ses.id}',${i})">
+        // Find original index in the full session for editing
+        const origIdx = searchTerm ? sessions.find(s=>s.id===ses.id).exercises.findIndex(e => e === ex || (e.name===ex.name && JSON.stringify(getExWeights(e))===JSON.stringify(getExWeights(ex)) && e.reps.join()=== ex.reps.join())) : i;
+        const vol = calcVolume(ex);
+        html += `<div class="exercise-row" onclick="editHistoryExercise('${ses.id}',${origIdx})">
           <div class="row"><span class="ex-name">${esc(ex.name)}</span><span class="ex-vol" style="margin-left:auto;">Vol: ${Math.round(vol)}</span></div>
-          <div class="ex-detail">${ex.weight} · ${ex.reps.length} sets: ${ex.reps.join(' / ')}</div>
+          <div class="ex-detail">${formatExDetail(ex)} · ${ex.reps.length} sets</div>
           ${ex.comment ? '<div class="ex-comment">'+esc(ex.comment)+'</div>' : ''}
         </div>`;
       });
@@ -725,9 +725,7 @@ async function editHistoryExercise(sessionId, exIdx) {
   const c = document.getElementById('edit-content');
   c.innerHTML = `
     <div class="label">Exercise: <strong>${esc(ex.name)}</strong></div>
-    <label class="label mt12">Weight</label>
-    <input type="number" id="ehe-weight" value="${ex.weight}" step="0.1" inputmode="decimal">
-    <label class="label mt12">Reps</label>
+    <label class="label mt12">Weight &amp; Reps per Set</label>
     <div id="ehe-sets"></div>
     <label class="label mt12">Comment</label>
     <input type="text" id="ehe-comment" value="${esc(ex.comment||'')}">
@@ -735,6 +733,7 @@ async function editHistoryExercise(sessionId, exIdx) {
     <button class="btn btn-danger mt8" onclick="deleteHistoryExercise('${sessionId}',${exIdx})">Delete Exercise</button>
   `;
   window._eheReps = [...ex.reps];
+  window._eheWeights = [...getExWeights(ex)];
   renderEheSets();
 }
 
@@ -743,6 +742,8 @@ function renderEheSets() {
   div.innerHTML = window._eheReps.map((r,i) => `
     <div class="set-row">
       <span class="set-label">Set ${i+1}</span>
+      <input type="number" value="${window._eheWeights[i]||0}" step="0.1" inputmode="decimal" style="width:70px;padding:8px;font-size:15px;text-align:center;" onchange="window._eheWeights[${i}]=parseFloat(this.value)||0" onfocus="this.select()">
+      <span class="text-sm text-secondary">×</span>
       <button class="set-btn" onclick="window._eheReps[${i}]=Math.max(1,window._eheReps[${i}]-1);renderEheSets()">−</button>
       <span class="set-reps">${r}</span>
       <button class="set-btn" onclick="window._eheReps[${i}]++;renderEheSets()">+</button>
@@ -754,7 +755,8 @@ function renderEheSets() {
 async function saveHistoryEdit(sessionId, exIdx) {
   const sessions = await getAllSessions();
   const ses = sessions.find(s => s.id === sessionId);
-  ses.exercises[exIdx].weight = parseFloat(document.getElementById('ehe-weight').value);
+  ses.exercises[exIdx].weights = [...window._eheWeights];
+  delete ses.exercises[exIdx].weight;
   ses.exercises[exIdx].reps = [...window._eheReps];
   ses.exercises[exIdx].comment = document.getElementById('ehe-comment').value.trim();
   await saveSession(ses);
@@ -828,7 +830,11 @@ async function renderPerfCharts() {
   sessions.forEach(s => {
     if (cutoff && s.date < cutoff) return;
     s.exercises.forEach(ex => {
-      if (ex.name === perfExercise) entries.push({ date: s.date, weight: ex.weight, volume: ex.weight * ex.reps.reduce((a,b)=>a+b,0) });
+      if (ex.name === perfExercise) {
+        const w = getExWeights(ex);
+        const maxW = Math.max(...w);
+        entries.push({ date: s.date, weight: maxW, volume: calcVolume(ex) });
+      }
     });
   });
   entries.sort((a,b) => a.date.localeCompare(b.date));
@@ -858,7 +864,7 @@ async function renderOverallCharts(sessions) {
   const weeklyFreq = {};
   filtered.forEach(s => {
     const w = getWeekStart(s.date);
-    const vol = s.exercises.reduce((sum,ex) => sum + ex.weight * ex.reps.reduce((a,b)=>a+b,0), 0);
+    const vol = s.exercises.reduce((sum,ex) => sum + calcVolume(ex), 0);
     weeklyVol[w] = (weeklyVol[w]||0) + vol;
     weeklyFreq[w] = (weeklyFreq[w]||0) + 1;
   });
@@ -898,9 +904,10 @@ async function showPRs() {
   const sessions = await getAllSessions();
   const prs = {};
   sessions.forEach(s => s.exercises.forEach(ex => {
-    const vol = ex.weight * ex.reps.reduce((a,b)=>a+b,0);
+    const vol = calcVolume(ex);
+    const maxW = Math.max(...getExWeights(ex));
     if (!prs[ex.name]) prs[ex.name] = { maxW:0, maxWDate:'', maxV:0, maxVDate:'' };
-    if (ex.weight > prs[ex.name].maxW) { prs[ex.name].maxW = ex.weight; prs[ex.name].maxWDate = s.date; }
+    if (maxW > prs[ex.name].maxW) { prs[ex.name].maxW = maxW; prs[ex.name].maxWDate = s.date; }
     if (vol > prs[ex.name].maxV) { prs[ex.name].maxV = vol; prs[ex.name].maxVDate = s.date; }
   }));
 
@@ -924,85 +931,6 @@ async function showPRs() {
 }
 
 function closePRModal() { document.getElementById('pr-modal').classList.add('hidden'); }
-
-// ============================================================
-// REST TIMER
-// ============================================================
-let timerInterval = null;
-let timerTotal = 90;
-let timerRemaining = 90;
-let timerRunning = false;
-
-function openTimer() {
-  document.getElementById('timer-overlay').classList.remove('hidden');
-  timerRemaining = timerTotal;
-  timerRunning = false;
-  updateTimerDisplay();
-  document.getElementById('timer-start-btn').textContent = 'Start';
-}
-
-function closeTimer() {
-  clearInterval(timerInterval);
-  timerRunning = false;
-  document.getElementById('timer-overlay').classList.add('hidden');
-}
-
-function setTimerDuration(secs, btn) {
-  clearInterval(timerInterval);
-  timerTotal = secs;
-  timerRemaining = secs;
-  timerRunning = false;
-  document.getElementById('timer-start-btn').textContent = 'Start';
-  document.querySelectorAll('#timer-overlay .chip').forEach(c => c.classList.remove('active'));
-  btn.classList.add('active');
-  updateTimerDisplay();
-}
-
-function toggleTimer() {
-  if (timerRunning) {
-    clearInterval(timerInterval);
-    timerRunning = false;
-    document.getElementById('timer-start-btn').textContent = 'Resume';
-  } else {
-    timerRunning = true;
-    document.getElementById('timer-start-btn').textContent = 'Stop';
-    timerInterval = setInterval(() => {
-      timerRemaining--;
-      updateTimerDisplay();
-      if (timerRemaining <= 0) {
-        clearInterval(timerInterval);
-        timerRunning = false;
-        document.getElementById('timer-start-btn').textContent = 'Start';
-        timerRemaining = timerTotal;
-        if (navigator.vibrate) navigator.vibrate([200,100,200]);
-        updateTimerDisplay();
-      }
-    }, 1000);
-  }
-}
-
-function updateTimerDisplay() {
-  const m = Math.floor(timerRemaining/60);
-  const s = timerRemaining % 60;
-  document.getElementById('timer-display').textContent = m+':'+String(s).padStart(2,'0');
-  // Draw arc
-  const canvas = document.getElementById('timer-canvas');
-  const ctx = canvas.getContext('2d');
-  const size = 152, cx = size/2, cy = size/2, r = 70;
-  ctx.clearRect(0,0,size,size);
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, 2*Math.PI);
-  ctx.strokeStyle = '#F5EDDE';
-  ctx.lineWidth = 6;
-  ctx.stroke();
-  const progress = timerTotal > 0 ? timerRemaining / timerTotal : 0;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, -Math.PI/2, -Math.PI/2 + 2*Math.PI*progress);
-  ctx.strokeStyle = '#D98C26';
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'round';
-  ctx.stroke();
-}
 
 // ============================================================
 // IMPORT / EXPORT
@@ -1059,7 +987,13 @@ async function importNestedSessions(sessions) {
     const session = { id: genId(), date: s.date, exercises: [] };
     s.exercises.forEach(ex => {
       const reps = Array.isArray(ex.reps) ? ex.reps : String(ex.reps).split(/[xX\-]/).map(n => parseInt(n.trim())).filter(n => !isNaN(n));
-      session.exercises.push({ name: ex.name, weight: ex.weight, reps, comment: ex.comment || '' });
+      const entry = { name: ex.name, reps, comment: ex.comment || '' };
+      if (ex.weights && Array.isArray(ex.weights)) {
+        entry.weights = ex.weights;
+      } else {
+        entry.weight = ex.weight || 0;
+      }
+      session.exercises.push(entry);
       total++;
     });
     await saveSession(session);
@@ -1095,7 +1029,7 @@ async function importCSVData(csvText) {
     if (fields.length < 5) continue;
     records.push({ date:fields[0], exercise:fields[1], sets:parseInt(fields[2])||3, weight:parseFloat(fields[3])||0, reps:fields[4], comment:fields[5]||'' });
   }
-  return importRecords(records);
+  return importFlatRecords(records);
 }
 
 function parseCSVLine(line) {
@@ -1115,8 +1049,8 @@ async function exportJSON() {
   const data = sessions.sort((a,b) => a.date.localeCompare(b.date)).map(s => ({
     date: s.date,
     exercises: s.exercises.map(ex => ({
-      name: ex.name, weight: ex.weight, sets: ex.reps.length,
-      reps: ex.reps, volume: ex.weight * ex.reps.reduce((a,b)=>a+b,0),
+      name: ex.name, weights: getExWeights(ex), sets: ex.reps.length,
+      reps: ex.reps, volume: calcVolume(ex),
       comment: ex.comment || null
     }))
   }));
@@ -1129,8 +1063,11 @@ async function exportCSV() {
   let csv = 'Date,Exercise,Sets,Weight,Reps,Volume,Comment\n';
   sessions.sort((a,b) => a.date.localeCompare(b.date)).forEach(s => {
     s.exercises.forEach(ex => {
-      const vol = ex.weight * ex.reps.reduce((a,b)=>a+b,0);
-      csv += `${s.date},${ex.name},${ex.reps.length},${ex.weight},${ex.reps.join('x')},${Math.round(vol)},${(ex.comment||'').replace(/,/g,';')}\n`;
+      const vol = calcVolume(ex);
+      const weights = getExWeights(ex);
+      const allSame = weights.every(w => w === weights[0]);
+      const wStr = allSame ? weights[0] : weights.join('/');
+      csv += `${s.date},${ex.name},${ex.reps.length},${wStr},${ex.reps.join('x')},${Math.round(vol)},${(ex.comment||'').replace(/,/g,';')}\n`;
     });
   });
   downloadFile(csv, 'gym_data.csv', 'text/csv');
@@ -1165,13 +1102,15 @@ document.addEventListener('click', e => {
 function generateInsight(entries) {
   if (entries.length < 2) return null;
   const latest = entries[0], prev = entries[1];
-  if (latest.weight > prev.weight) return `You increased weight from ${prev.weight} to ${latest.weight} last time!`;
-  if (latest.weight < prev.weight) return `You dropped weight from ${prev.weight} to ${latest.weight} last time.`;
-  const latestVol = latest.weight * latest.reps.reduce((a,b)=>a+b,0);
-  const maxVol = Math.max(...entries.map(e => e.weight * e.reps.reduce((a,b)=>a+b,0)));
+  const latestMaxW = Math.max(...getExWeights(latest));
+  const prevMaxW = Math.max(...getExWeights(prev));
+  if (latestMaxW > prevMaxW) return `You increased weight from ${prevMaxW} to ${latestMaxW} last time!`;
+  if (latestMaxW < prevMaxW) return `You dropped weight from ${prevMaxW} to ${latestMaxW} last time.`;
+  const latestVol = calcVolume(latest);
+  const maxVol = Math.max(...entries.map(e => calcVolume(e)));
   if (latestVol >= maxVol && latestVol > 0) return `Last session was a volume PR! ${Math.round(latestVol)} total.`;
   let sameCount = 0;
-  for (const e of entries.slice(0,8)) { if (e.weight === latest.weight) sameCount++; else break; }
+  for (const e of entries.slice(0,8)) { if (Math.max(...getExWeights(e)) === latestMaxW) sameCount++; else break; }
   if (sameCount >= 4) return `Same weight for ${sameCount} sessions — time to push?`;
   return null;
 }
@@ -1214,6 +1153,30 @@ function getRangeCutoff(range) {
 }
 
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// Get weights array for an exercise (handles old single-weight and new per-set format)
+function getExWeights(ex) {
+  if (ex.weights && Array.isArray(ex.weights)) return ex.weights;
+  const w = ex.weight || 0;
+  return ex.reps.map(() => w);
+}
+
+// Calculate volume for an exercise
+function calcVolume(ex) {
+  const weights = getExWeights(ex);
+  return ex.reps.reduce((sum, r, i) => sum + r * (weights[i] || weights[0] || 0), 0);
+}
+
+// Format weight × reps display for an exercise
+function formatExDetail(ex) {
+  const weights = getExWeights(ex);
+  const allSame = weights.every(w => w === weights[0]);
+  if (allSame) {
+    return `${weights[0]} × ${ex.reps.join(' / ')}`;
+  } else {
+    return ex.reps.map((r, i) => `${weights[i]||0}×${r}`).join(' / ');
+  }
+}
 
 function closeEditModal() { document.getElementById('edit-modal').classList.add('hidden'); }
 

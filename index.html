@@ -797,12 +797,24 @@ async function renderPerf() {
   chartInstances = {};
 
   if (perfMode === 'exercise') {
-    const names = [...new Set(sessions.flatMap(s => s.exercises.map(e => e.name)))].sort();
+    // Deduplicate names case-insensitively (keep first-seen casing)
+    const seenLower = new Set();
+    const names = [];
+    sessions.flatMap(s => s.exercises.map(e => e.name)).forEach(n => {
+      const lower = n.toLowerCase().trim();
+      if (!seenLower.has(lower)) { seenLower.add(lower); names.push(n.trim()); }
+    });
+    names.sort((a,b) => a.localeCompare(b));
     if (!perfExercise && names.length) perfExercise = names[0];
+    // Ensure perfExercise matches an existing name
+    if (!names.includes(perfExercise)) {
+      const match = names.find(n => n.toLowerCase() === perfExercise.toLowerCase());
+      perfExercise = match || names[0] || '';
+    }
 
     c.innerHTML = `
       <select id="perf-exercise" onchange="perfExercise=this.value;renderPerfCharts()" style="margin-bottom:12px;">
-        ${names.map(n => `<option ${n===perfExercise?'selected':''}>${esc(n)}</option>`).join('')}
+        ${names.map(n => `<option value="${esc(n)}" ${n===perfExercise?'selected':''}>${esc(n)}</option>`).join('')}
       </select>
       <div class="chip-row mb12">
         ${['3M','6M','12M','All'].map(r => `<button class="chip ${perfRange===r?'active':''}" onclick="perfRange='${r}';document.querySelectorAll('.chip-row .chip').forEach(c=>c.classList.remove('active'));this.classList.add('active');renderPerfCharts()">${r}</button>`).join('')}
@@ -827,10 +839,11 @@ async function renderPerfCharts() {
   const sessions = await getAllSessions();
   const cutoff = getRangeCutoff(perfRange);
   const entries = [];
+  const perfLower = perfExercise.toLowerCase().trim();
   sessions.forEach(s => {
     if (cutoff && s.date < cutoff) return;
     s.exercises.forEach(ex => {
-      if (ex.name === perfExercise) {
+      if (ex.name.toLowerCase().trim() === perfLower) {
         const w = getExWeights(ex);
         const maxW = Math.max(...w);
         entries.push({ date: s.date, weight: maxW, volume: calcVolume(ex) });
@@ -886,12 +899,18 @@ async function renderOverallCharts(sessions) {
   });
 }
 
+function formatChartDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()] + ' \'' + String(d.getFullYear()).slice(2);
+}
+
 function chartOptions(label, integer=false) {
   return {
     responsive:true, maintainAspectRatio:false,
     plugins:{ legend:{display:false} },
     scales:{
-      x:{ ticks:{ maxTicksLimit:6, font:{size:11}, color:'#8C7A61' }, grid:{display:false} },
+      x:{ ticks:{ maxTicksLimit:6, font:{size:11}, color:'#8C7A61', callback: function(val, i) { return formatChartDate(this.getLabelForValue(i)); } }, grid:{display:false} },
       y:{ ticks:{ font:{size:11}, color:'#8C7A61', ...(integer?{stepSize:1}:{}) }, grid:{color:'#ede5d8'}, title:{display:true, text:label, color:'#8C7A61', font:{size:12}} }
     }
   };

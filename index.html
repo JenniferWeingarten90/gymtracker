@@ -359,12 +359,16 @@ let chartInstances = {};
 // TAB SWITCHING
 // ============================================================
 function switchTab(name, btn) {
+  // Close any open modal so user can freely browse other tabs
+  document.getElementById('edit-modal').classList.add('hidden');
+  document.getElementById('pr-modal').classList.add('hidden');
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('view-' + name).classList.add('active');
   btn.classList.add('active');
   if (name === 'history') renderHistory();
   if (name === 'perf') renderPerf();
+  if (name === 'log') renderLog();
 }
 
 // ============================================================
@@ -378,9 +382,9 @@ function renderLog() {
       <div style="text-align:center;padding:40px 0;">
         <div style="font-size:48px;margin-bottom:16px;">🏋️</div>
         <div style="font-size:22px;font-weight:700;margin-bottom:20px;">Ready to train?</div>
-        <div class="card" style="text-align:left;overflow:hidden;">
+        <div class="card" style="text-align:left;">
           <label class="label">Workout Date</label>
-          <input type="date" id="session-date" value="${today}" style="max-width:100%;">
+          <input type="date" id="session-date" value="${today}" style="background:transparent;border:none;border-bottom:2px solid var(--amber);border-radius:0;padding:8px 0;font-size:18px;font-weight:600;width:100%;color:var(--text);">
         </div>
         <button class="btn btn-primary mt16" onclick="startWorkout()">Start Workout</button>
       </div>`;
@@ -414,19 +418,30 @@ function renderLog() {
 function startWorkout() {
   const date = document.getElementById('session-date').value;
   activeSession = { id: genId(), date: date, exercises: [] };
+  persistActiveSession();
   renderLog();
 }
 
 async function finishWorkout() {
   if (!activeSession || !activeSession.exercises.length) return;
-  await saveSession(activeSession);
+  // Merge into existing session on same date if one exists
+  const sessions = await getAllSessions();
+  const existing = sessions.find(s => s.date === activeSession.date && s.id !== activeSession.id);
+  if (existing) {
+    existing.exercises.push(...activeSession.exercises);
+    await saveSession(existing);
+  } else {
+    await saveSession(activeSession);
+  }
   activeSession = null;
+  persistActiveSession();
   renderLog();
 }
 
 function cancelWorkout() {
   if (!confirm('Discard this workout session?')) return;
   activeSession = null;
+  persistActiveSession();
   renderLog();
 }
 
@@ -570,6 +585,7 @@ function saveNewExercise() {
   const hasWeight = window._aeWeights.some(w => w > 0);
   if (!name || !hasWeight) { alert('Please enter exercise name and at least one weight.'); return; }
   activeSession.exercises.push({ name, weights: [...window._aeWeights], reps: [...window._aeReps], comment: comment||'' });
+  persistActiveSession();
   closeEditModal();
   renderLog();
 }
@@ -613,6 +629,7 @@ function saveEditActive(idx) {
   delete activeSession.exercises[idx].weight;
   activeSession.exercises[idx].reps = [...window._eaeReps];
   activeSession.exercises[idx].comment = document.getElementById('eae-comment').value.trim();
+  persistActiveSession();
   closeEditModal();
   renderLog();
 }
@@ -620,6 +637,7 @@ function saveEditActive(idx) {
 function deleteActiveExercise(idx) {
   if (!confirm('Delete this exercise?')) return;
   activeSession.exercises.splice(idx, 1);
+  persistActiveSession();
   closeEditModal();
   renderLog();
 }
@@ -1200,10 +1218,29 @@ function formatExDetail(ex) {
 function closeEditModal() { document.getElementById('edit-modal').classList.add('hidden'); }
 
 // ============================================================
+// ACTIVE SESSION PERSISTENCE (survive app close / reload)
+// ============================================================
+function persistActiveSession() {
+  if (activeSession) {
+    localStorage.setItem('activeSession', JSON.stringify(activeSession));
+  } else {
+    localStorage.removeItem('activeSession');
+  }
+}
+
+function restoreActiveSession() {
+  try {
+    const raw = localStorage.getItem('activeSession');
+    if (raw) activeSession = JSON.parse(raw);
+  } catch(e) { activeSession = null; }
+}
+
+// ============================================================
 // INIT
 // ============================================================
 (async function() {
   await openDB();
+  restoreActiveSession();
   renderLog();
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(()=>{});
